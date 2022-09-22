@@ -539,7 +539,7 @@ BLYNK_WRITE(V_Emergency)
   if (param.asInt())
   {
     SetLock(E_EMERGENCY, 3600);
-    SendMessageError("Hệ thống buộc dừng khẩn cấp 🤾‍♂️");
+//    SendMessageError("Hệ thống buộc dừng khẩn cấp 🤾‍♂️");
     Reset();
   }
   else
