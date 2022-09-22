@@ -29,11 +29,6 @@
 #include <BlynkSimpleEsp8266.h>
 
 
-BlynkTimer timer;
-WidgetLED  WLED_IsConnect(V_Connect);
-unsigned long previousMillis = 0;
-unsigned long interval = 30000;
-
 enum OPERATION_STATE
 {
   OP_POWERDOWN,
@@ -51,15 +46,16 @@ enum WATER_LEVEL
   WL_MAX
 };
 
-enum ERROR_ID
+enum ERROR_ID // priority
 {
   E_NONE,
-  E_WATER_LOW,
-  E_WATER_HIGH,
   E_PIPE,
+  E_WATER_HIGH,
+  E_WATER_LOW,
   E_POWER,
-  E_COMMUNICATION,
   E_PUMP,
+  E_EMERGENCY,
+  E_COMMUNICATION,
   E_MAX
 };
 
@@ -78,16 +74,23 @@ enum MODE_CONTROL
   MC_DRAIN = 60
 };
 
+enum WIFI
+{
+  WIFI_UNCONNECTED,
+  WIFI_CONNECTED,
+  WIFI_MAX
+};
+
 
 typedef struct sState
 {
   int OperationMode;
   int OperationState;
   int WaterLevel;
+  int Connection;
   int ErrorID;
-  int WLED_IsConnect;
-  
 };
+
 sState sState;
 
 typedef struct sControl
@@ -98,27 +101,95 @@ typedef struct sControl
 };
 sControl sControl;
 
+typedef struct sLock
+{
+  int status;
+  int time;
+  int count;
+};
 
+BlynkTimer timer;
+WidgetLED  WLED_IsConnect(V_Connect);
+
+sLock sLock[E_MAX] = {0};
+
+int GetStatusLock(int LockID);
+int GetTimeLock(int LockID);
+void SetLock(int LockID, int time);
+void ReleaseLock(int LockID);
+void ControlTimeLock(void); // 1s
 void Reset(void);
 void CheckConnection(void);
-int CheckWaterLevel(int avg_times);
-int CheckErrorID(void);
+void CheckWaterLevel(int avg_times);
+void SendMessageError(String msg);
+void CheckErrorID(void);
+void SendMessageOpState(String msg);
 void CheckOperationState(void);
 void CtrlWatering(void);
 void SendData();
 
+char auth[] = BLYNK_AUTH_TOKEN;
+// char ssid[] = "HTH 2";
+// char pass[] = "22222222";
+char ssid[] = "HgtA";
+char pass[] = "11111112";
 
 
 
-/************************ User Code *********************************/
+/************************ User Code - Time Lock *********************************/
+
+int GetStatusLock(int LockID)
+{
+  return sLock[LockID].status;
+}
+
+int GetTimeLock(int LockID)
+{
+  return sLock[LockID].time;
+}
+
+void SetLock(int LockID, int time)
+{
+  sLock[LockID].status = 1;
+  sLock[LockID].time = time;
+  sLock[LockID].count++;
+}
+
+void ReleaseLock(int LockID)
+{
+  if ( sLock[LockID].status)
+  {
+    sLock[LockID].status = 0;
+    sLock[LockID].time = 0;
+  }
+}
+
+void ControlTimeLock(void) // 1s
+{
+  for (int i = 0; i < E_MAX; i++)
+  {
+    if(sLock[i].time > 0)
+    {
+      sLock[i].time--;
+
+      if (sLock[i].time == 0)
+      {
+        ReleaseLock(i);
+      }
+    }
+  }
+}
+
+
+/************************ User Code - Operation *********************************/
 
 void Reset(void)
 {
+  sState.Connection = WIFI_CONNECTED;
+  sState.ErrorID = E_NONE;
   sState.OperationMode = MANUAL;
   sState.OperationState = OP_POWERDOWN;
   sState.WaterLevel = WL_NORMAL;
-  sState.ErrorID = E_NONE;
-  sState.WLED_IsConnect = 0;
 
   sControl.Capa = 0;
   sControl.ModeControl = MC_STOP;
@@ -129,15 +200,39 @@ void Reset(void)
   Blynk.virtualWrite(V_ErrorID, E_NONE);
   Blynk.virtualWrite(V_ModeControl, MC_STOP);
   Blynk.virtualWrite(V_RemainingTime, MC_STOP);
-
 }
 
 void CheckConnection(void)
 {
-  if (sState.WLED_IsConnect)
+  static bool BlinkLed = true;
+  static int  CountErr = 0;
+
+  if (Blynk.connected())
+  {
+    sState.Connection = WIFI_CONNECTED;
+    ReleaseLock[E_COMMUNICATION];
+    CountErr = 0;
+  }
+  else // Disconnect to Blynk server
+  {
+    if (++CountErr < 10)
+    {
+      sState.Connection = WIFI_UNCONNECTED;
+      SetLock(E_COMMUNICATION, 10);
+    }
+    else
+    {
+      analogWrite(PIN_OUT_CAPA_PUMP, 1023*0);
+
+      Blynk.begin(auth, ssid, pass);
+      CountErr = 0;
+    }
+  }
+
+  if (BlinkLed)
   {    
     WLED_IsConnect.off();
-    sState.WLED_IsConnect = 0;
+    BlinkLed = false;
     WLED_IsConnect.setColor(BLYNK_GREEN);
   }
   else
@@ -155,11 +250,11 @@ void CheckConnection(void)
       WLED_IsConnect.setColor(BLYNK_YELLOW);
     }
     WLED_IsConnect.on();
-    sState.WLED_IsConnect = 1;
+    BlinkLed = true;
   }
 }
 
-int CheckWaterLevel(int avg_times)
+void CheckWaterLevel(int avg_times)
 {
   float tmp = 0.0;
   int i = avg_times;
@@ -172,62 +267,93 @@ int CheckWaterLevel(int avg_times)
 
   if (tmp/avg_times <= 1)
   {
-    return WL_LOW;
+    sState.WaterLevel = WL_LOW;
+    SetLock(E_WATER_LOW, 1);
   }
   else if (tmp/avg_times > 100)
   {
-    return WL_HIGH;
+    sState.WaterLevel = WL_HIGH;
+    SetLock(E_WATER_HIGH, 1);
   }
   else
   {
-    return WL_NORMAL;
+    sState.WaterLevel = WL_NORMAL;
   }
   // return WL_NORMAL;
-
 }
 
-int CheckErrorID(void) // priority
+void SendMessageError(String msg)
 {
+  Blynk.virtualWrite(V_ErrorID, msg);
+}
+
+void CheckErrorID(void) // priority
+{
+  String msg = "";
+
+  for (int i = 0; i < E_MAX; i++)
+  {
+    if (sLock[i].status)
+    {
+      sState.ErrorID = sLock[i].status;
+
+      switch (i)
+      {
+        // case E_NONE:
+        // msg = "Hệ thống hoạt động tốt 😊"; break;
+        case E_WATER_LOW:
+        msg += "Mức nước quá thấp 💧 __  "; break;
+        case E_WATER_HIGH:
+        msg += "Mức nước quá cao 💧 __  "; break;
+        case E_PIPE:
+        msg += "Ống nước bị nghẽn 💧 __  "; break;
+        case E_POWER:
+        msg +=  "Nguồn không ổn định 🔌 __  "; break;
+        case E_COMMUNICATION:
+        msg +=  "Kết nối không ổn định ✈️ __  "; break;
+        case E_PUMP:
+        msg +=  "Bơm nước không hoạt động ⛽ __  "; break;
+        case E_EMERGENCY:
+        msg +=  "Hệ thống buộc dừng khẩn cấp 🤾‍♂️ __  "; break;
+        
+        default: break;
+      }
+    }
+  }
+
+  if (msg == "")
+  {
+    sState.ErrorID = E_NONE;
+    msg = "Hệ thống hoạt động tốt 😊 __  ";
+  }
+
+  SendMessageError(msg);
+
   // Power
   // PumpDown
-  if (!WiFi.status())
-  {
-    return E_COMMUNICATION;
-  }
-  // Water Level
-  else if (sState.WaterLevel == WL_LOW)
-  {
-    return E_WATER_LOW;
-  }
-  else if (sState.WaterLevel == WL_HIGH)
-  {
-    return E_WATER_HIGH;
-  }
-  else
-  {
-    return E_NONE;
-  }
-
-  unsigned long currentMillis = millis();
-
-  if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval)) {
-    // Restart your board
-    ESP.restart();
-  }
-  previousMillis = currentMillis;
 
 }
+
+void SendMessageOpState(String msg)
+{
+  Blynk.virtualWrite(V_OperationState, msg);
+}
+
 
 void CheckOperationState(void)
 {
+  String msg;
+
   switch (sState.OperationState)
   {
     case OP_POWERDOWN:
+      msg = "POWERDOWN";
       Reset();
       sState.OperationState = OP_STOP;
       break;
 
     case OP_STOP:
+      msg = "STOP";
       if (sState.ErrorID == E_NONE)
       {
         sState.OperationState = OP_STANDBY;
@@ -235,6 +361,7 @@ void CheckOperationState(void)
       break;
 
     case OP_STANDBY:
+      msg = "STANDBY";
       if ((sControl.ModeControl != MC_STOP))
       {
         sState.OperationState = OP_RUNNING;
@@ -247,6 +374,7 @@ void CheckOperationState(void)
       break;
 
     case OP_RUNNING:
+      msg = "RUNNING";
       if (sControl.RemainingTime == MC_STOP)
       {
         sState.OperationState = OP_STANDBY;
@@ -259,7 +387,9 @@ void CheckOperationState(void)
 
     default:
       break;
-    }
+  }
+
+  SendMessageOpState(msg);
 
 }
 
@@ -307,48 +437,24 @@ void CtrlWatering(void)
 
 
 
+/************************ User Code - Schedule *********************************/
+
 void SendData()
 {
+  ControlTimeLock();
+
   // Check the connection between ESP and APP
   CheckConnection();
 
   // Check the water level  
-  sState.WaterLevel = CheckWaterLevel(5);
+  CheckWaterLevel(5);
   // Blynk.virtualWrite(V_WaterLevel, sState.WaterLevel);
 
   // Check Error occurs
-  sState.ErrorID = CheckErrorID();
-  switch (sState.ErrorID) {
-    case E_NONE:
-    Blynk.virtualWrite(V_ErrorID, "Hệ thống hoạt động tốt 😊"); break;
-    case E_WATER_LOW:
-    Blynk.virtualWrite(V_ErrorID, "Mức nước quá thấp 💧"); break;
-    case E_WATER_HIGH:
-    Blynk.virtualWrite(V_ErrorID, "Mức nước quá cao 💧"); break;
-    case E_PIPE:
-    Blynk.virtualWrite(V_ErrorID, "Ống nước bị nghẽn 💧"); break;
-    case E_POWER:
-    Blynk.virtualWrite(V_ErrorID, "Nguồn không ổn định 🔌"); break;
-    case E_COMMUNICATION:
-    Blynk.virtualWrite(V_ErrorID, "Kết nối không ổn định ✈️"); break;
-    case E_PUMP:
-    Blynk.virtualWrite(V_ErrorID, "Bơm nước không hoạt động ⛽"); break;
-    default: break;
-  }
+  CheckErrorID();
 
   // Check Operation state
   CheckOperationState();
-  switch (sState.OperationState) {
-    case OP_POWERDOWN:
-    Blynk.virtualWrite(V_OperationState, "POWERDOWN"); break;
-    case OP_STANDBY:
-    Blynk.virtualWrite(V_OperationState, "STANDBY"); break;
-    case OP_RUNNING:
-    Blynk.virtualWrite(V_OperationState, "RUNNING"); break;
-    case OP_STOP:
-    Blynk.virtualWrite(V_OperationState, "STOP"); break;
-    default: break;
-  }
 
   // Control Water Plant
   CtrlWatering();
@@ -362,11 +468,7 @@ void setup()
 {
   // Init system
   Serial.begin(115200);
-  char auth[] = BLYNK_AUTH_TOKEN;
-  //char ssid[] = "HTH 2";
-  //char pass[] = "22222222";
-  char ssid[] = "HgtA";
-  char pass[] = "11111112";
+
   Blynk.begin(auth, ssid, pass);
   
   // PWM config
@@ -379,6 +481,7 @@ void setup()
 
   // Init parameters
   Reset();
+  SendMessageError("Init System");
 
   // Call back function
   timer.setInterval(1000L, SendData);
@@ -386,7 +489,7 @@ void setup()
 
 
 
-
+/************************ Blynk App *********************************/
 
 BLYNK_WRITE(V_OperationMode)
 {
@@ -427,15 +530,23 @@ BLYNK_WRITE(V_ModeControl)
 
 BLYNK_WRITE(V_Capa)
 {
-  sControl.Capa = 1023 * param.asInt();
+  sControl.Capa = 1023 * param.asInt() / 100;
   Blynk.virtualWrite(V_OperationState,  sControl.Capa);
 }
 
 BLYNK_WRITE(V_Emergency)
 {
-  Reset();
+  if (param.asInt())
+  {
+    SetLock(E_EMERGENCY, 3600);
+    SendMessageError("Hệ thống buộc dừng khẩn cấp 🤾‍♂️");
+    Reset();
+  }
+  else
+  {
+    ReleaseLock(E_EMERGENCY);
+  }
 }
-
 
 
 void loop()
