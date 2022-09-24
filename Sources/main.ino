@@ -15,6 +15,8 @@ char pass[] = BLYNK_WIFI_PASS;
 #define APP_DEBUG
 #define USE_NODE_MCU_BOARD
 
+#include <ESP8266WiFi.h>
+//#include <BlynkSimpleEsp8266.h>
 #include "main.h""
 #include "Edgent_ESP8266/BlynkEdgent.h"
 
