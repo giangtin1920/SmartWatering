@@ -10,12 +10,12 @@ char auth[] = BLYNK_AUTH_TOKEN;
 char ssid[] = BLYNK_WIFI_SSID;
 char pass[] = BLYNK_WIFI_PASS;
 
-#define BLYNK_FIRMWARE_VERSION "0.5.0"
+#define BLYNK_FIRMWARE_VERSION    "0.6.1"
 
 #define APP_DEBUG
 #define USE_NODE_MCU_BOARD
 
-#include "main.h""
+#include "main.h"
 #include "Edgent_ESP8266/BlynkEdgent.h"
 
 BlynkTimer timer;
@@ -84,12 +84,14 @@ void Reset(void)
   sControl.Capa = 0;
   sControl.ModeControl = MC_STOP;
   sControl.RemainingTime = MC_STOP;
+  sControl.HighPerformance = NONE;
 
   analogWrite(PIN_OUT_CAPA_PUMP, 0);
   Blynk.virtualWrite(V_Capa, 0);
   Blynk.virtualWrite(V_ErrorID, E_NONE);
   Blynk.virtualWrite(V_ModeControl, MC_STOP);
   Blynk.virtualWrite(V_RemainingTime, MC_STOP);
+  Blynk.virtualWrite(V_HighPerformance, NONE);
 }
 
 void CheckConnection(void)
@@ -422,14 +424,23 @@ BLYNK_WRITE(V_Capa)
 {
   double tmp = param.asDouble();
   
-  if (tmp)
+  if (tmp && !sControl.HighPerformance)
   {
     // y = ax + b
     tmp =  (1.0/900)*tmp + (593.0/990) ;
 
   }
+  else
+  {
+    tmp =  (1.0/900)*tmp + (593.0/990) + 0.29;
+  }
 
   sControl.Capa = 1023 * tmp;
+}
+
+BLYNK_WRITE(V_HighPerformance)
+{
+  sControl.HighPerformance = param.asInt();
 }
 
 BLYNK_WRITE(V_Emergency)

@@ -9,22 +9,24 @@
 #define BLYNK_RED       "#D3435C"
 #define BLYNK_DARK_BLUE "#5F7CD8"
 
-#define PIN_OUT_CAPA_PUMP D1
-#define PIN_IN_SENSOR A0
+#define PIN_OUT_CAPA_PUMP   D1
+#define PIN_IN_SENSOR       A0
 
-#define BLYNK_PRINT Serial
-#define V_Connect   V0
-#define V_ADC       V1
-#define V_Timer     V2
-#define V_OperationState V3
-#define V_OperationMode      V4
-#define V_ModeControl V5
-#define V_WaterLevel V6
-#define V_ErrorID V7
-#define V_RemainingTime V8
-#define V_Capa  V9
-#define V_Emergency V10
+#define BLYNK_PRINT         Serial
+#define V_Connect           V0
+#define V_ADC               V1
+#define V_Timer             V2
+#define V_OperationState    V3
+#define V_OperationMode     V4
+#define V_ModeControl       V5
+#define V_WaterLevel        V6
+#define V_ErrorID           V7
+#define V_RemainingTime     V8
+#define V_Capa              V9
+#define V_Emergency         V10
+#define V_HighPerformance   V11
 
+#define NONE                0
 
 enum OPERATION_STATE
 {
@@ -95,6 +97,7 @@ typedef struct sControl
   int ModeControl;
   int RemainingTime;
   int Capa;
+  int HighPerformance;
 };
 sControl sControl;
 
